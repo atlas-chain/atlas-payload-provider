@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>__HTML_TITLE__</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #101214;
+        --panel: #181c1f;
+        --field: #0c0f10;
+        --border: #344044;
+        --text: #edf2f0;
+        --muted: #a9b4b0;
+        --accent: #4ec38a;
+        --accent-ink: #07110c;
+        --warn: #e4b04a;
+        --bad: #f06b5f;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        background: var(--bg);
+        color: var(--text);
+        padding: 2rem 1rem;
+        line-height: 1.5;
+      }
+      .wrap { max-width: 1080px; margin: 0 auto; }
+      h1 { margin: 0 0 0.4rem; font-size: clamp(1.8rem, 4vw, 3rem); }
+      h2 { margin: 2rem 0 0.75rem; font-size: 1rem; color: var(--muted); letter-spacing: 0; text-transform: uppercase; }
+      .meta { color: var(--muted); display: flex; flex-wrap: wrap; gap: 0.75rem 1.5rem; }
+      .meta b { color: var(--text); }
+      .grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(280px, 0.6fr); gap: 1rem; align-items: start; }
+      .card { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 1rem; }
+      label { display: block; color: var(--muted); font-size: 0.82rem; margin-bottom: 0.25rem; }
+      input, textarea {
+        width: 100%;
+        color: var(--text);
+        background: var(--field);
+        border: 1px solid var(--border);
+        border-radius: 6px;
+        padding: 0.6rem;
+        font: inherit;
+      }
+      textarea { min-height: 180px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+      input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+      button {
+        cursor: pointer;
+        border: 1px solid var(--accent);
+        background: var(--accent);
+        color: var(--accent-ink);
+        font-weight: 700;
+        padding: 0.6rem 1rem;
+        border-radius: 6px;
+      }
+      button.secondary { background: transparent; color: var(--text); border-color: var(--border); }
+      button:disabled { opacity: 0.55; cursor: not-allowed; }
+      table { width: 100%; border-collapse: collapse; }
+      th, td { text-align: left; padding: 0.65rem 0.45rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+      th { color: var(--muted); font-size: 0.78rem; letter-spacing: 0; text-transform: uppercase; }
+      code { background: var(--field); padding: 0.12rem 0.35rem; border-radius: 4px; overflow-wrap: anywhere; }
+      a { color: var(--accent); }
+      .row { display: grid; gap: 0.75rem; }
+      .actions { display: flex; flex-wrap: wrap; gap: 0.7rem; align-items: center; margin-top: 0.9rem; }
+      .hint { color: var(--muted); font-size: 0.82rem; }
+      .pill { display: inline-block; padding: 0.1rem 0.45rem; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 0.75rem; }
+      .msg { margin-top: 1rem; padding: 0.75rem 0.9rem; border-radius: 6px; border: 1px solid var(--border); overflow-wrap: anywhere; }
+      .msg.ok { border-color: var(--accent); color: var(--accent); }
+      .msg.err { border-color: var(--bad); color: var(--bad); }
+      @media (max-width: 780px) {
+        body { padding: 1rem; }
+        .grid { grid-template-columns: 1fr; }
+        th:nth-child(4), td:nth-child(4) { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <h1>__HTML_TITLE__</h1>
+      <div class="meta" id="meta">loading status...</div>
+      <div class="msg" id="msg" hidden></div>
+
+      <div class="grid">
+        <section>
+          <h2>Submit Payload</h2>
+          <div class="card">
+            <form id="payloadForm" class="row">
+              <div>
+                <label for="namespace">namespace</label>
+                <input id="namespace" name="namespace" value="atlas.blocks" maxlength="64" required />
+              </div>
+              <div>
+                <label for="contentType">contentType</label>
+                <input id="contentType" name="contentType" value="application/octet-stream" maxlength="128" />
+              </div>
+              <div>
+                <label for="payloadText">payload text</label>
+                <textarea id="payloadText" name="payloadText" spellcheck="false" required>Hello Atlas</textarea>
+              </div>
+              <div>
+                <label for="bearerKey">ingress bearer key</label>
+                <input id="bearerKey" name="bearerKey" type="password" autocomplete="off" />
+              </div>
+              <div class="actions">
+                <button id="submitBtn" type="submit">Submit</button>
+                <button id="clearBtn" class="secondary" type="button">Clear</button>
+                <span class="hint" id="limitHint"></span>
+              </div>
+            </form>
+          </div>
+        </section>
+
+        <section>
+          <h2>Latest Payloads</h2>
+          <div class="card">
+            <table>
+              <thead>
+                <tr>
+                  <th>ID</th>
+                  <th>Size</th>
+                  <th>Signature</th>
+                  <th>Raw</th>
+                </tr>
+              </thead>
+              <tbody id="payloads"></tbody>
+            </table>
+          </div>
+        </section>
+      </div>
+    </div>
+
+    <script>
+      const STORAGE_KEY = "atlas-payload-provider-form";
+      const $ = (id) => document.getElementById(id);
+      const encoder = new TextEncoder();
+
+      function base64FromUtf8(value) {
+        const bytes = encoder.encode(value);
+        let binary = "";
+        bytes.forEach((byte) => { binary += String.fromCharCode(byte); });
+        return btoa(binary);
+      }
+
+      function showMessage(type, text) {
+        const el = $("msg");
+        el.className = "msg " + type;
+        el.textContent = text;
+        el.hidden = false;
+      }
+
+      function saveForm() {
+        const data = {
+          namespace: $("namespace").value,
+          contentType: $("contentType").value,
+          bearerKey: $("bearerKey").value,
+        };
+        try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch (_) {}
+      }
+
+      function restoreForm() {
+        let data;
+        try { data = JSON.parse(localStorage.getItem(STORAGE_KEY) || "{}"); } catch (_) { return; }
+        ["namespace", "contentType", "bearerKey"].forEach((id) => {
+          if (data[id] != null) $(id).value = data[id];
+        });
+      }
+
+      async function refresh() {
+        const res = await fetch("/status", { cache: "no-store" });
+        if (!res.ok) throw new Error("status HTTP " + res.status);
+        const status = await res.json();
+        $("meta").innerHTML =
+          "<span><b>payloads:</b> " + status.payloadCount + "</span>" +
+          "<span><b>stored bytes:</b> " + status.totalBytes + "</span>" +
+          "<span><b>max payload:</b> " + status.maxPayloadBytes + "</span>" +
+          "<span class=\"pill\">" + (status.ingressProtected ? "protected ingress" : "open ingress") + "</span>" +
+          "<span class=\"pill\">" + (status.signingEnabled ? "eth signing enabled" : "unsigned receipts") + "</span>" +
+          (status.signerAddress ? "<span><b>signer:</b> <code>" + status.signerAddress + "</code></span>" : "");
+        $("limitHint").textContent = "max " + status.maxPayloadBytes + " bytes";
+
+        const rows = status.latest.map((payload) => {
+          const short = payload.id.slice(0, 12) + "...";
+          const signature = payload.signature
+            ? "<code>" + payload.signature.signer.slice(0, 10) + "...</code><div class=\"hint\">v/r/s</div>"
+            : "<span class=\"hint\">unsigned</span>";
+          return "<tr>" +
+            "<td><a href=\"/payloads/" + payload.id + "\"><code>" + short + "</code></a><div class=\"hint\">" + payload.namespace + "</div></td>" +
+            "<td>" + payload.sizeBytes + "</td>" +
+            "<td>" + signature + "</td>" +
+            "<td><a href=\"/payloads/" + payload.id + "/raw\">raw</a></td>" +
+            "</tr>";
+        });
+        $("payloads").innerHTML = rows.join("") || "<tr><td colspan=\"4\" class=\"hint\">no payloads yet</td></tr>";
+      }
+
+      async function submitPayload(event) {
+        event.preventDefault();
+        $("submitBtn").disabled = true;
+        saveForm();
+        try {
+          const headers = { "content-type": "application/json" };
+          const bearer = $("bearerKey").value.trim();
+          if (bearer) headers.authorization = "Bearer " + bearer;
+          const body = {
+            namespace: $("namespace").value.trim(),
+            contentType: $("contentType").value.trim() || null,
+            payloadBase64: base64FromUtf8($("payloadText").value),
+          };
+          const res = await fetch("/payloads", { method: "POST", headers, body: JSON.stringify(body) });
+          const json = await res.json();
+          if (!res.ok) throw new Error(json.error && json.error.message ? json.error.message : "HTTP " + res.status);
+          const signedBy = json.payload.signature ? " signed by " + json.payload.signature.signer : "";
+          showMessage("ok", (json.created ? "receipt issued for " : "receipt confirmed for ") + json.payload.id + signedBy);
+          await refresh();
+        } catch (error) {
+          showMessage("err", error.message);
+        } finally {
+          $("submitBtn").disabled = false;
+        }
+      }
+
+      restoreForm();
+      $("payloadForm").addEventListener("submit", submitPayload);
+      ["namespace", "contentType", "bearerKey"].forEach((id) => $(id).addEventListener("input", saveForm));
+      $("clearBtn").addEventListener("click", () => {
+        $("payloadText").value = "";
+        $("msg").hidden = true;
+      });
+      refresh().catch((error) => showMessage("err", error.message));
+      setInterval(() => refresh().catch(() => {}), 5000);
+    </script>
+  </body>
+</html>

@@ -1,0 +1,7 @@
+target
+.idea
+.claude
+*.log
+.env
+data/payloads/*.json
+!data/payloads/.gitkeep

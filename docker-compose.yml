@@ -1,0 +1,20 @@
+services:
+  payload-provider:
+    build: .
+    image: atlas-payload-provider
+    container_name: atlas-payload-provider
+    ports:
+      - "28883:28883"
+    environment:
+      LISTEN_HOST: "0.0.0.0"
+      LISTEN_PORT: "28883"
+      HTML_TITLE: ${HTML_TITLE:-Atlas Payload Provider}
+      PAYLOAD_DIR: /data/payloads
+      MAX_PAYLOAD_BYTES: ${MAX_PAYLOAD_BYTES:-1048576}
+      # Set this to require Authorization: Bearer <token> on payload submissions:
+      INGRESS_BEARER_KEY: ${INGRESS_BEARER_KEY:-}
+      # Optional Ethereum secp256k1 private key used to sign accepted payload receipts:
+      SIGNER_PRIVATE_KEY: ${SIGNER_PRIVATE_KEY:-}
+    volumes:
+      - ./data/payloads:/data/payloads
+    restart: unless-stopped
