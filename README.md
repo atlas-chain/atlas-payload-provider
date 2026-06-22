@@ -199,4 +199,12 @@ GitHub Actions runs the same script on pushes to `main`, on any pushed tag, and 
 docker compose up --build
 ```
 
+The GitHub Actions package workflow publishes Docker images to GitHub Packages:
+
+```bash
+docker pull ghcr.io/atlas-chain/atlas-payload-provider:main
+```
+
+Pushes to `main` publish the `main` and commit SHA tags. Version tags publish the matching tag, commit SHA tag, and `latest`.
+
 See `instructions.md` for an operator-oriented Docker Compose example and runtime notes.
