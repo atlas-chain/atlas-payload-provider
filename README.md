@@ -1,5 +1,6 @@
 # Atlas Payload Provider
 
+
 Atlas Payload Provider is a small data availability service for accepting, validating, storing, and serving payload bytes. Payloads are content-addressed, stored on disk as JSON records, and can optionally include an Ethereum-style EIP-191 receipt signature proving that this provider received the payload.
 
 ## Quick Start
