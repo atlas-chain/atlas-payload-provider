@@ -1,0 +1,26 @@
+{
+  "name": "@atlas-chain/payload-client",
+  "version": "0.1.0",
+  "description": "HTTP client and EIP-191 receipt signature verifier for the Atlas Payload Provider.",
+  "type": "module",
+  "license": "MIT",
+  "engines": {
+    "bun": ">=1.2"
+  },
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "submit": "bun run examples/submit-and-verify.ts",
+    "verify": "bun run examples/verify.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@noble/curves": "^2.2.0",
+    "@noble/hashes": "^2.2.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.0",
+    "@types/bun": "^1.2.0"
+  }
+}
