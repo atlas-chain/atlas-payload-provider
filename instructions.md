@@ -38,10 +38,38 @@ curl -X POST http://localhost:28883/payloads \
   }'
 ```
 
-Read metadata and encoded payload:
+Submit an ARKIV entity payload with canonical JSON and sorted attributes:
+
+```bash
+curl -X POST http://localhost:28883/arkiv/payloads \
+  -H 'content-type: application/json' \
+  -d '{
+    "payloadJson": {
+      "entity": {
+        "entityType": "document",
+        "entityId": "doc-123",
+        "entityContent": "Hello from ARKIV"
+      }
+    },
+    "attributes": [
+      { "key": "type", "value": "document" },
+      { "key": "id", "value": "doc-123" },
+      { "key": "version", "value": 1 }
+    ],
+    "expiresIn": 2592000
+  }'
+```
+
+The ARKIV adapter stores only the resulting payload bytes. It returns the normal
+provider receipt plus normalized ARKIV context (`contentType`, sorted
+attributes, optional `entityKey`, and optional `expiresIn`) for clients that will
+build and submit ARKIV SDK mutations.
+
+Read metadata and the optional receipt signature:
 
 ```text
 GET /payloads/<payload-id>
+GET /payloads/<payload-id>/signature
 ```
 
 Read raw bytes:
@@ -59,6 +87,12 @@ GET /payloads
 ```
 
 Payload IDs are SHA-256 content addresses over `namespace || 0x00 || payload bytes`. Checksums are SHA-256 over only the payload bytes.
+Submission and metadata responses omit `payloadBase64`; use `/raw` when a client
+needs the payload body.
+
+ARKIV adapter payload IDs use the same content-addressing rule. The default
+ARKIV namespace is `arkiv.entities`, and JSON input is encoded as compact
+canonical UTF-8 JSON before storage.
 
 When signing is enabled, payload records include a receipt signature confirming that this provider received this exact payload:
 

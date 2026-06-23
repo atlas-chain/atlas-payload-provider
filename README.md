@@ -102,6 +102,7 @@ Authorization: Bearer <INGRESS_BEARER_KEY>
 ```
 
 Successful submissions return `201 Created` for a new payload and `200 OK` for an already known payload.
+The response returns payload metadata and any receipt signature, but omits `payloadBase64` so large payload bodies are not echoed back.
 
 ```json
 {
@@ -114,7 +115,6 @@ Successful submissions return `201 Created` for a new payload and `200 OK` for a
     "sizeBytes": 5,
     "checksum": "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824",
     "submittedAt": "2026-06-22T12:00:00Z",
-    "payloadBase64": "aGVsbG8=",
     "signature": {
       "scheme": "eip191",
       "signer": "0x...",
@@ -139,6 +139,72 @@ Successful submissions return `201 Created` for a new payload and `200 OK` for a
 
 Payload IDs are SHA-256 content addresses over `namespace || 0x00 || payload bytes`. `checksum` is SHA-256 over only the decoded payload bytes.
 
+### Submit ARKIV Payload
+
+```http
+POST /arkiv/payloads
+Content-Type: application/json
+Authorization: Bearer <INGRESS_BEARER_KEY>
+```
+
+`/arkiv/payloads` is an adapter for ARKIV entity payload construction. It does not send an on-chain transaction; it canonicalizes or validates ARKIV-shaped payload input, stores the resulting bytes through the same provider receipt flow, and returns normalized ARKIV context that clients can use with the ARKIV SDK.
+
+Submit canonical JSON:
+
+```json
+{
+  "payloadJson": {
+    "entity": {
+      "entityType": "document",
+      "entityId": "doc-123",
+      "entityContent": "Hello from ARKIV"
+    }
+  },
+  "attributes": [
+    { "key": "type", "value": "document" },
+    { "key": "id", "value": "doc-123" },
+    { "key": "version", "value": 1 }
+  ],
+  "expiresIn": 2592000
+}
+```
+
+The adapter sorts object keys at every JSON level and stores the compact UTF-8 JSON bytes with `contentType: "application/json"` and default `namespace: "arkiv.entities"`. You may provide `namespace`, `contentType`, `entityKey`, and either `payloadJson` or `payloadBase64`, but not both payload fields.
+
+Successful responses include payload metadata plus normalized ARKIV context. They do not echo the encoded payload body.
+
+```json
+{
+  "ok": true,
+  "created": true,
+  "arkiv": {
+    "namespace": "arkiv.entities",
+    "contentType": "application/json",
+    "payloadEncoding": "canonicalJson",
+    "attributes": [
+      { "key": "id", "value": "doc-123" },
+      { "key": "type", "value": "document" },
+      { "key": "version", "value": 1 }
+    ],
+    "expiresIn": 2592000
+  },
+  "payload": {
+    "id": "...",
+    "namespace": "arkiv.entities",
+    "contentType": "application/json",
+    "sizeBytes": 92,
+    "checksum": "sha256:...",
+    "submittedAt": "2026-06-22T12:00:00Z",
+    "signature": {
+      "scheme": "eip191",
+      "signer": "0x..."
+    }
+  }
+}
+```
+
+ARKIV attributes are validated with the chain-compatible `Ident32` shape: non-empty, at most 32 bytes, first character `a` through `z`, then lowercase ASCII letters, digits, `_`, `-`, or `.`. String attribute values are limited to 128 bytes. Attributes are returned sorted by `key`.
+
 ### List Payloads
 
 ```http
@@ -153,7 +219,15 @@ Returns payload summaries. Summaries omit `payloadBase64` but include signature 
 GET /payloads/{id}
 ```
 
-Returns the full payload record, including `payloadBase64`.
+Returns payload metadata and the full receipt signature when one exists. It does not include `payloadBase64`.
+
+### Read Payload Signature
+
+```http
+GET /payloads/{id}/signature
+```
+
+Returns only the signature object and payload ID. Unsigned payloads return `404 Not Found`.
 
 ### Read Raw Payload Bytes
 

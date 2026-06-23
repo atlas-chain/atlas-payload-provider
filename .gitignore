@@ -3,6 +3,7 @@ dist
 .idea
 .claude
 *.log
+*:Zone.Identifier
 .env
 data/payloads/*.json
 !data/payloads/.gitkeep

@@ -1,3 +1,4 @@
+mod arkiv;
 mod config;
 mod frontend;
 mod model;

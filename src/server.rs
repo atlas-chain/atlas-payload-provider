@@ -13,8 +13,9 @@ use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
+use crate::arkiv::{self, ArkivPayloadContext, ArkivPayloadSubmission};
 use crate::frontend::INDEX_HTML;
-use crate::model::PayloadSubmission;
+use crate::model::{PayloadSubmission, metadata};
 use crate::store::{PayloadStore, StoreFailure, SubmitOutcome};
 use crate::validation;
 
@@ -50,7 +51,7 @@ pub async fn run_server(state: AppState, listen_host: String, listen_port: u16) 
             "ingressProtected": state.ingress_key.is_some(),
             "signingEnabled": state.store.signer_address().is_some(),
             "signerAddress": state.store.signer_address(),
-            "endpoints": ["/", "/status", "/payloads", "/payloads/{id}", "/payloads/{id}/raw", "/healthz"],
+            "endpoints": ["/", "/status", "/payloads", "/arkiv/payloads", "/payloads/{id}", "/payloads/{id}/signature", "/payloads/{id}/raw", "/healthz"],
         })
     );
 
@@ -58,7 +59,9 @@ pub async fn run_server(state: AppState, listen_host: String, listen_port: u16) 
         .route("/", get(index_handler))
         .route("/status", get(status_handler))
         .route("/payloads", get(list_payloads).post(submit_payload))
+        .route("/arkiv/payloads", axum::routing::post(submit_arkiv_payload))
         .route("/payloads/{id}", get(get_payload))
+        .route("/payloads/{id}/signature", get(get_payload_signature))
         .route("/payloads/{id}/raw", get(get_payload_raw))
         .route("/healthz", get(health_handler))
         .fallback(not_found_handler)
@@ -102,7 +105,7 @@ async fn status_handler(State(state): State<AppState>) -> Json<Value> {
         "signingEnabled": state.store.signer_address().is_some(),
         "signerAddress": state.store.signer_address(),
         "latest": snapshot.latest,
-        "endpoints": ["/", "/status", "/payloads", "/payloads/{id}", "/payloads/{id}/raw", "/healthz"],
+        "endpoints": ["/", "/status", "/payloads", "/arkiv/payloads", "/payloads/{id}", "/payloads/{id}/signature", "/payloads/{id}/raw", "/healthz"],
     }))
 }
 
@@ -142,6 +145,32 @@ async fn submit_payload(
     }
 }
 
+async fn submit_arkiv_payload(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(submission): Json<ArkivPayloadSubmission>,
+) -> Response {
+    if let Err(response) = authorize_ingress(&state, &headers) {
+        return *response;
+    }
+
+    let started = Instant::now();
+    let prepared = match arkiv::prepare_submission(submission, state.store.max_payload_bytes()) {
+        Ok(prepared) => prepared,
+        Err(error) => return error_response(StatusCode::BAD_REQUEST, error.to_string()),
+    };
+
+    match state.store.submit(prepared.payload) {
+        Ok(outcome) => publish_arkiv_submission(started, outcome, prepared.context),
+        Err(StoreFailure::Persistence(message)) => {
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, message)
+        }
+        Err(StoreFailure::Signing(message)) => {
+            error_response(StatusCode::INTERNAL_SERVER_ERROR, message)
+        }
+    }
+}
+
 async fn get_payload(State(state): State<AppState>, Path(id): Path<String>) -> Response {
     let Some(record) = state.store.get(&id) else {
         return error_response(StatusCode::NOT_FOUND, format!("payload {id} not found"));
@@ -155,7 +184,34 @@ async fn get_payload(State(state): State<AppState>, Path(id): Path<String>) -> R
         ],
         Json(json!({
             "ok": true,
-            "payload": record,
+            "payload": metadata(&record),
+        })),
+    )
+        .into_response()
+}
+
+async fn get_payload_signature(State(state): State<AppState>, Path(id): Path<String>) -> Response {
+    let Some(record) = state.store.get(&id) else {
+        return error_response(StatusCode::NOT_FOUND, format!("payload {id} not found"));
+    };
+
+    let Some(signature) = record.signature else {
+        return error_response(
+            StatusCode::NOT_FOUND,
+            format!("payload {id} has no signature"),
+        );
+    };
+
+    (
+        StatusCode::OK,
+        [
+            ("content-type", "application/json"),
+            ("cache-control", "no-cache"),
+        ],
+        Json(json!({
+            "ok": true,
+            "payloadId": record.id,
+            "signature": signature,
         })),
     )
         .into_response()
@@ -283,7 +339,50 @@ fn publish_submission(started: Instant, outcome: SubmitOutcome) -> Response {
         Json(json!({
             "ok": true,
             "created": outcome.created,
-            "payload": outcome.record,
+            "payload": metadata(&outcome.record),
+        })),
+    )
+        .into_response()
+}
+
+fn publish_arkiv_submission(
+    started: Instant,
+    outcome: SubmitOutcome,
+    context: ArkivPayloadContext,
+) -> Response {
+    let latency_ms = started.elapsed().as_millis();
+    let status = if outcome.created {
+        StatusCode::CREATED
+    } else {
+        StatusCode::OK
+    };
+
+    println!(
+        "{}",
+        json!({
+            "message": if outcome.created { "arkiv payload receipt issued" } else { "arkiv payload receipt confirmed" },
+            "path": "/arkiv/payloads",
+            "status": status.as_u16(),
+            "id": outcome.record.id,
+            "namespace": outcome.record.namespace,
+            "sizeBytes": outcome.record.size_bytes,
+            "checksum": outcome.record.checksum,
+            "signerAddress": outcome.record.signature.as_ref().map(|signature| signature.signer.as_str()),
+            "latencyMs": latency_ms.to_string(),
+        })
+    );
+
+    (
+        status,
+        [
+            ("content-type", "application/json"),
+            ("cache-control", "no-cache"),
+        ],
+        Json(json!({
+            "ok": true,
+            "created": outcome.created,
+            "arkiv": context,
+            "payload": metadata(&outcome.record),
         })),
     )
         .into_response()
@@ -402,7 +501,12 @@ mod tests {
         };
 
         let response = submit_payload(State(state), HeaderMap::new(), Json(submission)).await;
-        assert_eq!(response.status(), StatusCode::CREATED);
+        let (status, _, body) = body_string(response).await;
+        let body: Value = serde_json::from_str(&body).unwrap();
+
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(body["payload"]["sizeBytes"], json!(5));
+        assert!(body["payload"].get("payloadBase64").is_none());
     }
 
     #[tokio::test]
@@ -418,6 +522,95 @@ mod tests {
 
         let response = submit_payload(State(state), headers, Json(submission)).await;
         assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+
+    #[tokio::test]
+    async fn submit_arkiv_payload_canonicalizes_json() {
+        let state = state_with_key(None);
+        let submission = ArkivPayloadSubmission {
+            namespace: None,
+            content_type: None,
+            payload_base64: None,
+            payload_json: Some(json!({
+                "entity": {
+                    "type": "document",
+                    "id": "doc-123",
+                    "body": "Hello from ARKIV"
+                }
+            })),
+            attributes: vec![
+                arkiv::ArkivAttribute {
+                    key: "type".to_string(),
+                    value: arkiv::ArkivAttributeValue::String("document".to_string()),
+                },
+                arkiv::ArkivAttribute {
+                    key: "id".to_string(),
+                    value: arkiv::ArkivAttributeValue::String("doc-123".to_string()),
+                },
+            ],
+            expires_in: Some(2_592_000),
+            entity_key: None,
+        };
+
+        let response =
+            submit_arkiv_payload(State(state.clone()), HeaderMap::new(), Json(submission)).await;
+        let (status, _, body) = body_string(response).await;
+        let body: Value = serde_json::from_str(&body).unwrap();
+        let payload_id = body["payload"]["id"].as_str().unwrap().to_string();
+
+        assert_eq!(status, StatusCode::CREATED);
+        assert_eq!(body["arkiv"]["namespace"], json!("arkiv.entities"));
+        assert_eq!(body["arkiv"]["contentType"], json!("application/json"));
+        assert_eq!(body["arkiv"]["attributes"][0]["key"], json!("id"));
+        assert_eq!(body["arkiv"]["attributes"][1]["key"], json!("type"));
+        assert!(body["payload"].get("payloadBase64").is_none());
+
+        let raw = get_payload_raw(State(state), Path(payload_id)).await;
+        let bytes = axum::body::to_bytes(raw.into_body(), usize::MAX)
+            .await
+            .unwrap();
+        assert_eq!(
+            bytes.as_ref(),
+            br#"{"entity":{"body":"Hello from ARKIV","id":"doc-123","type":"document"}}"#
+        );
+    }
+
+    #[tokio::test]
+    async fn get_payload_returns_metadata_without_payload_body() {
+        let state = state_with_key(None);
+        let outcome = state
+            .store
+            .submit(ValidatedPayload {
+                namespace: "atlas.blocks".to_string(),
+                content_type: Some("text/plain".to_string()),
+                bytes: b"hello".to_vec(),
+            })
+            .unwrap();
+
+        let response = get_payload(State(state), Path(outcome.record.id)).await;
+        let (status, _, body) = body_string(response).await;
+        let body: Value = serde_json::from_str(&body).unwrap();
+
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(body["payload"]["sizeBytes"], json!(5));
+        assert!(body["payload"].get("payloadBase64").is_none());
+    }
+
+    #[tokio::test]
+    async fn get_payload_signature_reports_unsigned_payload() {
+        let state = state_with_key(None);
+        let outcome = state
+            .store
+            .submit(ValidatedPayload {
+                namespace: "atlas.blocks".to_string(),
+                content_type: Some("text/plain".to_string()),
+                bytes: b"hello".to_vec(),
+            })
+            .unwrap();
+
+        let response = get_payload_signature(State(state), Path(outcome.record.id)).await;
+
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
     }
 
     #[tokio::test]

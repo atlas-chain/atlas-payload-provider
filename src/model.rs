@@ -33,6 +33,25 @@ pub struct PayloadRecord {
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PayloadMetadata {
+    pub id: String,
+    pub namespace: String,
+    #[serde(
+        rename = "contentType",
+        skip_serializing_if = "Option::is_none",
+        default
+    )]
+    pub content_type: Option<String>,
+    #[serde(rename = "sizeBytes")]
+    pub size_bytes: usize,
+    pub checksum: String,
+    #[serde(rename = "submittedAt")]
+    pub submitted_at: String,
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub signature: Option<PayloadSignature>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct PayloadSummary {
     pub id: String,
     pub namespace: String,
@@ -104,6 +123,18 @@ pub fn summarize(record: &PayloadRecord) -> PayloadSummary {
     }
 }
 
+pub fn metadata(record: &PayloadRecord) -> PayloadMetadata {
+    PayloadMetadata {
+        id: record.id.clone(),
+        namespace: record.namespace.clone(),
+        content_type: record.content_type.clone(),
+        size_bytes: record.size_bytes,
+        checksum: record.checksum.clone(),
+        submitted_at: record.submitted_at.clone(),
+        signature: record.signature.clone(),
+    }
+}
+
 pub fn receipt_for_record(record: &PayloadRecord) -> PayloadReceipt {
     PayloadReceipt {
         service: "atlas-payload-provider".to_string(),
@@ -171,6 +202,14 @@ mod tests {
     fn summary_omits_payload_body() {
         let summary = summarize(&record());
         let serialized = serde_json::to_string(&summary).unwrap();
+        assert!(serialized.contains("\"sizeBytes\""));
+        assert!(!serialized.contains("payloadBase64"));
+    }
+
+    #[test]
+    fn metadata_omits_payload_body() {
+        let metadata = metadata(&record());
+        let serialized = serde_json::to_string(&metadata).unwrap();
         assert!(serialized.contains("\"sizeBytes\""));
         assert!(!serialized.contains("payloadBase64"));
     }
