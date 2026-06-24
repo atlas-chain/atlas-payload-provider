@@ -29,6 +29,10 @@ pub struct ArkivPayloadSubmission {
     pub expires_in: Option<u64>,
     #[serde(rename = "entityKey", default)]
     pub entity_key: Option<String>,
+    #[serde(default)]
+    pub nonce: Option<String>,
+    #[serde(default)]
+    pub payment: Option<u64>,
 }
 
 #[derive(Clone, Debug)]
@@ -49,6 +53,10 @@ pub struct ArkivPayloadContext {
     pub expires_in: Option<u64>,
     #[serde(rename = "entityKey", skip_serializing_if = "Option::is_none")]
     pub entity_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub payment: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, PartialEq, Eq)]
@@ -159,6 +167,8 @@ pub fn prepare_submission(
             namespace,
             content_type,
             payload_base64,
+            nonce: submission.nonce.clone(),
+            payment: submission.payment,
         },
         max_payload_bytes,
     )
@@ -172,6 +182,8 @@ pub fn prepare_submission(
             attributes,
             expires_in: submission.expires_in,
             entity_key,
+            nonce: payload.receipt_context.nonce.clone(),
+            payment: payload.receipt_context.payment,
         },
         payload,
     })
@@ -312,6 +324,8 @@ mod tests {
                 ],
                 expires_in: Some(30),
                 entity_key: None,
+                nonce: None,
+                payment: None,
             },
             1024,
         )
@@ -335,6 +349,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["id", "version"]
         );
+        assert_eq!(prepared.context.nonce, None);
+        assert_eq!(prepared.context.payment, None);
     }
 
     #[test]
@@ -351,6 +367,8 @@ mod tests {
                 }],
                 expires_in: None,
                 entity_key: None,
+                nonce: None,
+                payment: None,
             },
             1024,
         )
@@ -364,6 +382,7 @@ mod tests {
 
     #[test]
     fn normalizes_entity_key() {
+        let nonce = format!("0x{}", "12".repeat(32));
         let prepared = prepare_submission(
             ArkivPayloadSubmission {
                 namespace: None,
@@ -376,6 +395,8 @@ mod tests {
                     "0xAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
                         .to_string(),
                 ),
+                nonce: Some(nonce.clone()),
+                payment: Some(100_000),
             },
             1024,
         )
@@ -385,5 +406,7 @@ mod tests {
             prepared.context.entity_key.as_deref(),
             Some("0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
         );
+        assert_eq!(prepared.context.nonce.as_deref(), Some(nonce.as_str()));
+        assert_eq!(prepared.context.payment, Some(100_000));
     }
 }

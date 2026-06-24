@@ -6,7 +6,10 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use sha2::{Digest, Sha256};
 
-use crate::model::{PayloadRecord, PayloadSummary, canonicalize, now_iso_second, summarize};
+use crate::model::{
+    PayloadReceiptContext, PayloadRecord, PayloadSignature, PayloadSummary, canonicalize,
+    now_iso_second, receipt_for_record_with_context, summarize,
+};
 use crate::signer::{
     EthereumSigner, signature_is_current_payload_receipt, validate_payload_signature,
 };
@@ -24,6 +27,7 @@ pub struct StoreSnapshot {
 pub struct SubmitOutcome {
     pub record: PayloadRecord,
     pub created: bool,
+    pub signature: Option<PayloadSignature>,
 }
 
 #[derive(Debug)]
@@ -112,6 +116,7 @@ impl PayloadStore {
     }
 
     pub fn submit(&self, payload: ValidatedPayload) -> Result<SubmitOutcome, StoreFailure> {
+        let receipt_context = payload.receipt_context.clone();
         let mut record = record_for(payload);
         self.sign_record_if_enabled(&mut record)?;
         let mut inner = self.inner.lock().expect("payload store lock poisoned");
@@ -133,6 +138,7 @@ impl PayloadStore {
             }
 
             return Ok(SubmitOutcome {
+                signature: self.signature_for_context(&existing, &receipt_context)?,
                 record: existing,
                 created: false,
             });
@@ -148,6 +154,7 @@ impl PayloadStore {
         inner.payloads.insert(record.id.clone(), record.clone());
 
         Ok(SubmitOutcome {
+            signature: self.signature_for_context(&record, &receipt_context)?,
             record,
             created: true,
         })
@@ -200,6 +207,25 @@ impl PayloadStore {
 
         record.signature = Some(signer.sign_record(record).map_err(StoreFailure::Signing)?);
         Ok(())
+    }
+
+    fn signature_for_context(
+        &self,
+        record: &PayloadRecord,
+        context: &PayloadReceiptContext,
+    ) -> Result<Option<PayloadSignature>, StoreFailure> {
+        if context.is_empty() {
+            return Ok(record.signature.clone());
+        }
+
+        let Some(signer) = self.signer.as_ref() else {
+            return Ok(None);
+        };
+
+        signer
+            .sign_receipt(receipt_for_record_with_context(record, context))
+            .map(Some)
+            .map_err(StoreFailure::Signing)
     }
 }
 
@@ -320,6 +346,7 @@ mod tests {
             namespace: "atlas.blocks".to_string(),
             content_type: Some("application/octet-stream".to_string()),
             bytes: bytes.to_vec(),
+            receipt_context: PayloadReceiptContext::default(),
         }
     }
 
@@ -399,6 +426,36 @@ mod tests {
         let loaded = PayloadStore::load(dir.clone(), 1024, None).unwrap();
         let record = loaded.get(&outcome.record.id).unwrap();
         assert!(record.signature.is_some());
+
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn submit_returns_contextual_signature_without_changing_payload_id() {
+        let dir = temp_payload_dir("contextual-signature");
+        let signer = EthereumSigner::from_private_key_hex(
+            "0x0000000000000000000000000000000000000000000000000000000000000001",
+        )
+        .unwrap();
+        let store = PayloadStore::load(dir.clone(), 1024, Some(signer)).unwrap();
+        let nonce = format!("0x{}", "ab".repeat(32));
+        let mut contextual_payload = payload(b"hello");
+        contextual_payload.receipt_context = PayloadReceiptContext {
+            nonce: Some(nonce.clone()),
+            payment: Some(100_000),
+        };
+
+        let first = store.submit(payload(b"hello")).unwrap();
+        let second = store.submit(contextual_payload).unwrap();
+
+        assert_eq!(first.record.id, second.record.id);
+        let signature = second.signature.as_ref().unwrap();
+        assert_eq!(signature.receipt.nonce.as_deref(), Some(nonce.as_str()));
+        assert_eq!(signature.receipt.payment, Some(100_000));
+        assert_eq!(
+            second.record.signature.as_ref().unwrap().receipt.nonce,
+            None
+        );
 
         let _ = std::fs::remove_dir_all(dir);
     }

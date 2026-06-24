@@ -1,7 +1,7 @@
 use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 
-use crate::model::{PayloadRecord, PayloadSubmission};
+use crate::model::{PayloadReceiptContext, PayloadRecord, PayloadSubmission};
 
 const MAX_NAMESPACE_BYTES: usize = 64;
 const MAX_CONTENT_TYPE_BYTES: usize = 128;
@@ -11,6 +11,7 @@ pub struct ValidatedPayload {
     pub namespace: String,
     pub content_type: Option<String>,
     pub bytes: Vec<u8>,
+    pub receipt_context: PayloadReceiptContext,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -20,6 +21,8 @@ pub enum ValidationFailure {
     InvalidNamespaceCharacter { index: usize, byte: u8 },
     ContentTypeTooLong { max: usize, actual: usize },
     InvalidContentTypeCharacter { index: usize, byte: u8 },
+    InvalidNonce { value: String },
+    InvalidPayment { value: u64 },
     InvalidBase64 { message: String },
     EmptyPayload,
     PayloadTooLarge { max: usize, actual: usize },
@@ -44,6 +47,13 @@ impl std::fmt::Display for ValidationFailure {
                 f,
                 "contentType contains invalid byte 0x{byte:02x} at index {index}"
             ),
+            Self::InvalidNonce { value } => write!(
+                f,
+                "nonce must be a non-zero 0x-prefixed 32-byte hex string, got {value:?}"
+            ),
+            Self::InvalidPayment { value } => {
+                write!(f, "payment must be greater than zero, got {value}")
+            }
             Self::InvalidBase64 { message } => write!(f, "payloadBase64 is invalid: {message}"),
             Self::EmptyPayload => write!(f, "payload must not be empty"),
             Self::PayloadTooLarge { max, actual } => {
@@ -63,12 +73,15 @@ pub fn validate_submission(
 ) -> Result<ValidatedPayload, ValidationFailure> {
     let namespace = validate_namespace(&submission.namespace)?;
     let content_type = validate_content_type(submission.content_type.as_deref())?;
+    let nonce = validate_nonce(submission.nonce)?;
+    let payment = validate_payment(submission.payment)?;
     let bytes = decode_payload_base64(&submission.payload_base64, max_payload_bytes)?;
 
     Ok(ValidatedPayload {
         namespace,
         content_type,
         bytes,
+        receipt_context: PayloadReceiptContext { nonce, payment },
     })
 }
 
@@ -138,6 +151,30 @@ fn validate_content_type(value: Option<&str>) -> Result<Option<String>, Validati
     Ok(Some(trimmed.to_string()))
 }
 
+fn validate_nonce(value: Option<String>) -> Result<Option<String>, ValidationFailure> {
+    let Some(value) = value else {
+        return Ok(None);
+    };
+    let trimmed = value.trim().to_lowercase();
+    let Some(hex) = trimmed.strip_prefix("0x") else {
+        return Err(ValidationFailure::InvalidNonce { value });
+    };
+    if hex.len() != 64 || !hex.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err(ValidationFailure::InvalidNonce { value });
+    }
+    if hex.bytes().all(|byte| byte == b'0') {
+        return Err(ValidationFailure::InvalidNonce { value });
+    }
+    Ok(Some(trimmed))
+}
+
+fn validate_payment(value: Option<u64>) -> Result<Option<u64>, ValidationFailure> {
+    if matches!(value, Some(0)) {
+        return Err(ValidationFailure::InvalidPayment { value: 0 });
+    }
+    Ok(value)
+}
+
 fn decode_payload_base64(
     value: &str,
     max_payload_bytes: usize,
@@ -170,6 +207,8 @@ mod tests {
             namespace: "atlas.blocks".to_string(),
             content_type: Some(" application/octet-stream ".to_string()),
             payload_base64: payload_base64.to_string(),
+            nonce: None,
+            payment: None,
         }
     }
 
@@ -183,6 +222,8 @@ mod tests {
             Some("application/octet-stream")
         );
         assert_eq!(payload.bytes, b"hello");
+        assert_eq!(payload.receipt_context.nonce, None);
+        assert_eq!(payload.receipt_context.payment, None);
     }
 
     #[test]
@@ -223,6 +264,44 @@ mod tests {
         assert_eq!(
             validate_submission(submission(""), 1024),
             Err(ValidationFailure::EmptyPayload)
+        );
+    }
+
+    #[test]
+    fn validates_receipt_context() {
+        let expected_nonce = format!("0x{}", "ab".repeat(32));
+        let mut item = submission("aGVsbG8=");
+        item.nonce = Some(expected_nonce.clone());
+        item.payment = Some(100_000);
+
+        let payload = validate_submission(item, 1024).unwrap();
+
+        assert_eq!(
+            payload.receipt_context.nonce.as_deref(),
+            Some(expected_nonce.as_str())
+        );
+        assert_eq!(payload.receipt_context.payment, Some(100_000));
+    }
+
+    #[test]
+    fn rejects_zero_receipt_context_nonce() {
+        let mut item = submission("aGVsbG8=");
+        item.nonce = Some(format!("0x{}", "00".repeat(32)));
+
+        assert!(matches!(
+            validate_submission(item, 1024),
+            Err(ValidationFailure::InvalidNonce { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_zero_payment() {
+        let mut item = submission("aGVsbG8=");
+        item.payment = Some(0);
+
+        assert_eq!(
+            validate_submission(item, 1024),
+            Err(ValidationFailure::InvalidPayment { value: 0 })
         );
     }
 

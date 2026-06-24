@@ -86,6 +86,8 @@ export class PayloadProviderClient {
       namespace: input.namespace,
     };
     if (input.contentType) body.contentType = input.contentType;
+    if (input.nonce) body.nonce = input.nonce;
+    if (input.payment !== undefined) body.payment = input.payment;
 
     if (input.payloadBase64 != null) {
       body.payloadBase64 = input.payloadBase64;

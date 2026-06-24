@@ -9,6 +9,10 @@ pub struct PayloadSubmission {
     pub content_type: Option<String>,
     #[serde(rename = "payloadBase64")]
     pub payload_base64: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payment: Option<u64>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -82,6 +86,24 @@ pub struct PayloadReceipt {
     pub size_bytes: usize,
     #[serde(rename = "submittedAt")]
     pub submitted_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payment: Option<u64>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct PayloadReceiptContext {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub nonce: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub payment: Option<u64>,
+}
+
+impl PayloadReceiptContext {
+    pub fn is_empty(&self) -> bool {
+        self.nonce.is_none() && self.payment.is_none()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -124,6 +146,13 @@ pub fn summarize(record: &PayloadRecord) -> PayloadSummary {
 }
 
 pub fn metadata(record: &PayloadRecord) -> PayloadMetadata {
+    metadata_with_signature(record, record.signature.clone())
+}
+
+pub fn metadata_with_signature(
+    record: &PayloadRecord,
+    signature: Option<PayloadSignature>,
+) -> PayloadMetadata {
     PayloadMetadata {
         id: record.id.clone(),
         namespace: record.namespace.clone(),
@@ -131,11 +160,18 @@ pub fn metadata(record: &PayloadRecord) -> PayloadMetadata {
         size_bytes: record.size_bytes,
         checksum: record.checksum.clone(),
         submitted_at: record.submitted_at.clone(),
-        signature: record.signature.clone(),
+        signature,
     }
 }
 
 pub fn receipt_for_record(record: &PayloadRecord) -> PayloadReceipt {
+    receipt_for_record_with_context(record, &PayloadReceiptContext::default())
+}
+
+pub fn receipt_for_record_with_context(
+    record: &PayloadRecord,
+    context: &PayloadReceiptContext,
+) -> PayloadReceipt {
     PayloadReceipt {
         service: "atlas-payload-provider".to_string(),
         action: "payloadReceived".to_string(),
@@ -144,6 +180,8 @@ pub fn receipt_for_record(record: &PayloadRecord) -> PayloadReceipt {
         checksum: record.checksum.clone(),
         size_bytes: record.size_bytes,
         submitted_at: record.submitted_at.clone(),
+        nonce: context.nonce.clone(),
+        payment: context.payment,
     }
 }
 
@@ -222,5 +260,22 @@ mod tests {
         assert_eq!(receipt.action, "payloadReceived");
         assert_eq!(receipt.payload_id, "abc");
         assert_eq!(receipt.size_bytes, 5);
+        assert_eq!(receipt.nonce, None);
+        assert_eq!(receipt.payment, None);
+    }
+
+    #[test]
+    fn receipt_can_include_nonce_and_payment_context() {
+        let nonce = format!("0x{}", "01".repeat(32));
+        let receipt = receipt_for_record_with_context(
+            &record(),
+            &PayloadReceiptContext {
+                nonce: Some(nonce.clone()),
+                payment: Some(100_000),
+            },
+        );
+
+        assert_eq!(receipt.nonce.as_deref(), Some(nonce.as_str()));
+        assert_eq!(receipt.payment, Some(100_000));
     }
 }

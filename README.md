@@ -169,7 +169,7 @@ Submit canonical JSON:
 }
 ```
 
-The adapter sorts object keys at every JSON level and stores the compact UTF-8 JSON bytes with `contentType: "application/json"` and default `namespace: "arkiv.entities"`. You may provide `namespace`, `contentType`, `entityKey`, and either `payloadJson` or `payloadBase64`, but not both payload fields.
+The adapter sorts object keys at every JSON level and stores the compact UTF-8 JSON bytes with `contentType: "application/json"` and default `namespace: "arkiv.entities"`. You may provide `namespace`, `contentType`, `entityKey`, optional `nonce`, optional numeric `payment`, and either `payloadJson` or `payloadBase64`, but not both payload fields.
 
 Successful responses include payload metadata plus normalized ARKIV context. They do not echo the encoded payload body.
 
@@ -249,11 +249,18 @@ When `SIGNER_PRIVATE_KEY` is set, each accepted payload receives a signature ove
   "namespace": "<namespace>",
   "checksum": "<payload checksum>",
   "sizeBytes": 5,
-  "submittedAt": "<timestamp>"
+  "submittedAt": "<timestamp>",
+  "nonce": "0x<optional 32-byte nonce>",
+  "payment": 100000
 }
 ```
 
-The receipt is signed with the Ethereum signed message prefix (`EIP-191`) and a secp256k1 private key. This signature is a provider receipt only; it does not submit an Ethereum transaction or prove on-chain inclusion.
+`nonce` and `payment` are omitted unless the submission included them.
+ARKIV reference-mode clients use a nonzero 32-byte nonce and a simple
+numeric gas payment value. The receipt is signed with the Ethereum
+signed message prefix (`EIP-191`) and a secp256k1 private key. This
+signature is a provider receipt only; it does not submit an Ethereum
+transaction or prove on-chain inclusion.
 
 ## Packaging
 

@@ -70,8 +70,11 @@ The server builds a receipt (`src/model.rs` → `PayloadReceipt`) and serializes
 it with `serde_json::to_string` — compact, keys in struct-declaration order:
 
 ```json
-{"service":"atlas-payload-provider","action":"payloadReceived","payloadId":"<id>","namespace":"<ns>","checksum":"sha256:<hex>","sizeBytes":25,"submittedAt":"<iso>"}
+{"service":"atlas-payload-provider","action":"payloadReceived","payloadId":"<id>","namespace":"<ns>","checksum":"sha256:<hex>","sizeBytes":25,"submittedAt":"<iso>","nonce":"0x<optional bytes32>","payment":100000}
 ```
+
+`nonce` and `payment` are present only when the submission supplied
+them, for example from ARKIV reference-mode SDK calls.
 
 The signed digest is `keccak256("\x19Ethereum Signed Message:\n" + len + receipt)` (see
 `src/signer.rs` → `eip191_hash`). This library reproduces that byte-for-byte and
