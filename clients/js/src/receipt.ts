@@ -57,6 +57,8 @@ export function canonicalizeReceipt(receipt: PayloadReceipt): string {
     sizeBytes: receipt.sizeBytes,
     submittedAt: receipt.submittedAt,
   };
+  if (receipt.nonce !== undefined) ordered.nonce = receipt.nonce;
+  if (receipt.payment !== undefined) ordered.payment = receipt.payment;
   return JSON.stringify(ordered);
 }
 
@@ -83,6 +85,8 @@ export function receiptForMetadata(meta: {
   checksum: string;
   sizeBytes: number;
   submittedAt: string;
+  nonce?: string;
+  payment?: number;
 }): PayloadReceipt {
   return {
     service: "atlas-payload-provider",
@@ -92,5 +96,7 @@ export function receiptForMetadata(meta: {
     checksum: meta.checksum,
     sizeBytes: meta.sizeBytes,
     submittedAt: meta.submittedAt,
+    nonce: meta.nonce,
+    payment: meta.payment,
   };
 }

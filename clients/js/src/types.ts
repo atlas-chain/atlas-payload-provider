@@ -14,6 +14,10 @@ export interface PayloadReceipt {
   sizeBytes: number;
   /** ISO-8601 UTC, second precision (e.g. "2026-06-23T17:03:19Z"). */
   submittedAt: string;
+  /** Optional one-time Arkiv payload-reference nonce. */
+  nonce?: string;
+  /** Optional signed gas payment amount. */
+  payment?: number;
 }
 
 export interface PayloadSignature {
@@ -66,6 +70,10 @@ export interface SubmitPayloadInput {
   payload?: Uint8Array | string;
   /** Base64-encoded payload bytes. */
   payloadBase64?: string;
+  /** Optional one-time Arkiv payload-reference nonce. */
+  nonce?: string;
+  /** Optional signed gas payment amount. */
+  payment?: number;
 }
 
 export interface StatusResponse {

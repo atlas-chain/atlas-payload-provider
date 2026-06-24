@@ -115,6 +115,11 @@ When signing is enabled, payload records include a receipt signature confirming 
 }
 ```
 
+When a submission includes a nonzero 32-byte `nonce` and numeric
+`payment`, those fields are included in the signed receipt. ARKIV
+reference-mode SDK calls use this to bind the provider receipt to a
+one-time replay nonce and a simple gas payment amount.
+
 ## Docker Compose Example
 
 ```yaml

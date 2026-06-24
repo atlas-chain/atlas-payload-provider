@@ -15,7 +15,7 @@ use tokio::net::TcpListener;
 
 use crate::arkiv::{self, ArkivPayloadContext, ArkivPayloadSubmission};
 use crate::frontend::INDEX_HTML;
-use crate::model::{PayloadSubmission, metadata};
+use crate::model::{PayloadSubmission, metadata, metadata_with_signature};
 use crate::store::{PayloadStore, StoreFailure, SubmitOutcome};
 use crate::validation;
 
@@ -325,7 +325,7 @@ fn publish_submission(started: Instant, outcome: SubmitOutcome) -> Response {
             "namespace": outcome.record.namespace,
             "sizeBytes": outcome.record.size_bytes,
             "checksum": outcome.record.checksum,
-            "signerAddress": outcome.record.signature.as_ref().map(|signature| signature.signer.as_str()),
+            "signerAddress": outcome.signature.as_ref().map(|signature| signature.signer.as_str()),
             "latencyMs": latency_ms.to_string(),
         })
     );
@@ -339,7 +339,7 @@ fn publish_submission(started: Instant, outcome: SubmitOutcome) -> Response {
         Json(json!({
             "ok": true,
             "created": outcome.created,
-            "payload": metadata(&outcome.record),
+            "payload": metadata_with_signature(&outcome.record, outcome.signature.clone()),
         })),
     )
         .into_response()
@@ -367,7 +367,7 @@ fn publish_arkiv_submission(
             "namespace": outcome.record.namespace,
             "sizeBytes": outcome.record.size_bytes,
             "checksum": outcome.record.checksum,
-            "signerAddress": outcome.record.signature.as_ref().map(|signature| signature.signer.as_str()),
+            "signerAddress": outcome.signature.as_ref().map(|signature| signature.signer.as_str()),
             "latencyMs": latency_ms.to_string(),
         })
     );
@@ -382,7 +382,7 @@ fn publish_arkiv_submission(
             "ok": true,
             "created": outcome.created,
             "arkiv": context,
-            "payload": metadata(&outcome.record),
+            "payload": metadata_with_signature(&outcome.record, outcome.signature.clone()),
         })),
     )
         .into_response()
@@ -412,6 +412,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::model::PayloadReceiptContext;
     use crate::validation::ValidatedPayload;
 
     fn temp_payload_dir(name: &str) -> std::path::PathBuf {
@@ -498,6 +499,8 @@ mod tests {
             namespace: "atlas.blocks".to_string(),
             content_type: None,
             payload_base64: "aGVsbG8=".to_string(),
+            nonce: None,
+            payment: None,
         };
 
         let response = submit_payload(State(state), HeaderMap::new(), Json(submission)).await;
@@ -518,6 +521,8 @@ mod tests {
             namespace: "atlas.blocks".to_string(),
             content_type: None,
             payload_base64: "aGVsbG8=".to_string(),
+            nonce: None,
+            payment: None,
         };
 
         let response = submit_payload(State(state), headers, Json(submission)).await;
@@ -550,6 +555,8 @@ mod tests {
             ],
             expires_in: Some(2_592_000),
             entity_key: None,
+            nonce: None,
+            payment: None,
         };
 
         let response =
@@ -584,6 +591,7 @@ mod tests {
                 namespace: "atlas.blocks".to_string(),
                 content_type: Some("text/plain".to_string()),
                 bytes: b"hello".to_vec(),
+                receipt_context: PayloadReceiptContext::default(),
             })
             .unwrap();
 
@@ -605,6 +613,7 @@ mod tests {
                 namespace: "atlas.blocks".to_string(),
                 content_type: Some("text/plain".to_string()),
                 bytes: b"hello".to_vec(),
+                receipt_context: PayloadReceiptContext::default(),
             })
             .unwrap();
 
@@ -622,6 +631,7 @@ mod tests {
                 namespace: "atlas.blocks".to_string(),
                 content_type: Some("text/plain".to_string()),
                 bytes: b"hello".to_vec(),
+                receipt_context: PayloadReceiptContext::default(),
             })
             .unwrap();
 
