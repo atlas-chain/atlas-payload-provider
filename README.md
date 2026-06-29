@@ -256,8 +256,8 @@ When `SIGNER_PRIVATE_KEY` is set, each accepted payload receives a signature ove
 ```
 
 `nonce` and `payment` are omitted unless the submission included them.
-ARKIV reference-mode clients use a nonzero 32-byte nonce and a simple
-numeric gas payment value. The receipt is signed with the Ethereum
+ARKIV reference-mode clients use a nonzero 32-byte nonce and signed
+provider payment gas units. The receipt is signed with the Ethereum
 signed message prefix (`EIP-191`) and a secp256k1 private key. This
 signature is a provider receipt only; it does not submit an Ethereum
 transaction or prove on-chain inclusion.

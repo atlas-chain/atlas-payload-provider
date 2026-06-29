@@ -16,7 +16,7 @@ export interface PayloadReceipt {
   submittedAt: string;
   /** Optional one-time Arkiv payload-reference nonce. */
   nonce?: string;
-  /** Optional signed gas payment amount. */
+  /** Optional signed provider payment gas units. */
   payment?: number;
 }
 
@@ -72,7 +72,7 @@ export interface SubmitPayloadInput {
   payloadBase64?: string;
   /** Optional one-time Arkiv payload-reference nonce. */
   nonce?: string;
-  /** Optional signed gas payment amount. */
+  /** Optional signed provider payment gas units. */
   payment?: number;
 }
 

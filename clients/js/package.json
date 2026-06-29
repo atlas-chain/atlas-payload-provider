@@ -1,6 +1,6 @@
 {
   "name": "@atlas-chain/payload-client",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "HTTP client and EIP-191 receipt signature verifier for the Atlas Payload Provider.",
   "type": "module",
   "license": "MIT",
