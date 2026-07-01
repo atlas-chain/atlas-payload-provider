@@ -8,14 +8,12 @@ use axum::http::{HeaderMap, HeaderValue, StatusCode};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
-use base64::Engine;
-use base64::engine::general_purpose::STANDARD;
 use serde_json::{Value, json};
 use tokio::net::TcpListener;
 
 use crate::arkiv::{self, ArkivPayloadContext, ArkivPayloadSubmission};
 use crate::frontend::INDEX_HTML;
-use crate::model::{PayloadSubmission, metadata, metadata_with_signature};
+use crate::model::{PayloadSubmission, metadata_with_signature};
 use crate::store::{PayloadStore, StoreFailure, SubmitOutcome};
 use crate::validation;
 
@@ -184,7 +182,7 @@ async fn get_payload(State(state): State<AppState>, Path(id): Path<String>) -> R
         ],
         Json(json!({
             "ok": true,
-            "payload": metadata(&record),
+            "payload": record,
         })),
     )
         .into_response()
@@ -222,12 +220,23 @@ async fn get_payload_raw(State(state): State<AppState>, Path(id): Path<String>) 
         return error_response(StatusCode::NOT_FOUND, format!("payload {id} not found"));
     };
 
-    let bytes = match STANDARD.decode(record.payload_base64.as_bytes()) {
-        Ok(bytes) => bytes,
+    let store = state.store.clone();
+    let read_id = id.clone();
+    let bytes = match tokio::task::spawn_blocking(move || store.payload_bytes(&read_id)).await {
+        Ok(Ok(Some(bytes))) => bytes,
+        Ok(Ok(None)) => {
+            return error_response(StatusCode::NOT_FOUND, format!("payload {id} not found"));
+        }
+        Ok(Err(error)) => {
+            return error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                format!("stored payload {id} could not be read: {error}"),
+            );
+        }
         Err(error) => {
             return error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
-                format!("stored payload {id} could not be decoded: {error}"),
+                format!("stored payload {id} could not be read: {error}"),
             );
         }
     };

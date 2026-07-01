@@ -133,26 +133,19 @@ pub fn canonicalize(record: &PayloadRecord) -> String {
     serde_json::to_string_pretty(record).expect("payload record serializes to JSON")
 }
 
-pub fn summarize(record: &PayloadRecord) -> PayloadSummary {
+pub fn summarize(metadata: &PayloadMetadata) -> PayloadSummary {
     PayloadSummary {
-        id: record.id.clone(),
-        namespace: record.namespace.clone(),
-        content_type: record.content_type.clone(),
-        size_bytes: record.size_bytes,
-        checksum: record.checksum.clone(),
-        submitted_at: record.submitted_at.clone(),
-        signature: record.signature.as_ref().map(summarize_signature),
+        id: metadata.id.clone(),
+        namespace: metadata.namespace.clone(),
+        content_type: metadata.content_type.clone(),
+        size_bytes: metadata.size_bytes,
+        checksum: metadata.checksum.clone(),
+        submitted_at: metadata.submitted_at.clone(),
+        signature: metadata.signature.as_ref().map(summarize_signature),
     }
 }
 
-pub fn metadata(record: &PayloadRecord) -> PayloadMetadata {
-    metadata_with_signature(record, record.signature.clone())
-}
-
-pub fn metadata_with_signature(
-    record: &PayloadRecord,
-    signature: Option<PayloadSignature>,
-) -> PayloadMetadata {
+pub fn metadata_for(record: &PayloadRecord) -> PayloadMetadata {
     PayloadMetadata {
         id: record.id.clone(),
         namespace: record.namespace.clone(),
@@ -160,33 +153,43 @@ pub fn metadata_with_signature(
         size_bytes: record.size_bytes,
         checksum: record.checksum.clone(),
         submitted_at: record.submitted_at.clone(),
-        signature,
+        signature: record.signature.clone(),
     }
 }
 
-pub fn receipt_for_record(record: &PayloadRecord) -> PayloadReceipt {
-    receipt_for_record_with_context(record, &PayloadReceiptContext::default())
+pub fn metadata_with_signature(
+    metadata: &PayloadMetadata,
+    signature: Option<PayloadSignature>,
+) -> PayloadMetadata {
+    PayloadMetadata {
+        signature,
+        ..metadata.clone()
+    }
+}
+
+pub fn receipt_for_record(metadata: &PayloadMetadata) -> PayloadReceipt {
+    receipt_for_record_with_context(metadata, &PayloadReceiptContext::default())
 }
 
 pub fn receipt_for_record_with_context(
-    record: &PayloadRecord,
+    metadata: &PayloadMetadata,
     context: &PayloadReceiptContext,
 ) -> PayloadReceipt {
     PayloadReceipt {
         service: "atlas-payload-provider".to_string(),
         action: "payloadReceived".to_string(),
-        payload_id: record.id.clone(),
-        namespace: record.namespace.clone(),
-        checksum: record.checksum.clone(),
-        size_bytes: record.size_bytes,
-        submitted_at: record.submitted_at.clone(),
+        payload_id: metadata.id.clone(),
+        namespace: metadata.namespace.clone(),
+        checksum: metadata.checksum.clone(),
+        size_bytes: metadata.size_bytes,
+        submitted_at: metadata.submitted_at.clone(),
         nonce: context.nonce.clone(),
         payment: context.payment,
     }
 }
 
-pub fn legacy_hosting_receipt_for_record(record: &PayloadRecord) -> PayloadReceipt {
-    let mut receipt = receipt_for_record(record);
+pub fn legacy_hosting_receipt_for_record(metadata: &PayloadMetadata) -> PayloadReceipt {
+    let mut receipt = receipt_for_record(metadata);
     receipt.action = "hostPayload".to_string();
     receipt
 }
@@ -238,7 +241,7 @@ mod tests {
 
     #[test]
     fn summary_omits_payload_body() {
-        let summary = summarize(&record());
+        let summary = summarize(&metadata_for(&record()));
         let serialized = serde_json::to_string(&summary).unwrap();
         assert!(serialized.contains("\"sizeBytes\""));
         assert!(!serialized.contains("payloadBase64"));
@@ -246,7 +249,7 @@ mod tests {
 
     #[test]
     fn metadata_omits_payload_body() {
-        let metadata = metadata(&record());
+        let metadata = metadata_for(&record());
         let serialized = serde_json::to_string(&metadata).unwrap();
         assert!(serialized.contains("\"sizeBytes\""));
         assert!(!serialized.contains("payloadBase64"));
@@ -254,7 +257,7 @@ mod tests {
 
     #[test]
     fn receipt_uses_record_metadata() {
-        let receipt = receipt_for_record(&record());
+        let receipt = receipt_for_record(&metadata_for(&record()));
 
         assert_eq!(receipt.service, "atlas-payload-provider");
         assert_eq!(receipt.action, "payloadReceived");
@@ -268,7 +271,7 @@ mod tests {
     fn receipt_can_include_nonce_and_payment_context() {
         let nonce = format!("0x{}", "01".repeat(32));
         let receipt = receipt_for_record_with_context(
-            &record(),
+            &metadata_for(&record()),
             &PayloadReceiptContext {
                 nonce: Some(nonce.clone()),
                 payment: Some(100_000),

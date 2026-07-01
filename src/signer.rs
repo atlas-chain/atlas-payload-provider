@@ -45,9 +45,9 @@ impl EthereumSigner {
 
     pub fn sign_record(
         &self,
-        record: &crate::model::PayloadRecord,
+        metadata: &crate::model::PayloadMetadata,
     ) -> Result<PayloadSignature, String> {
-        self.sign_receipt(receipt_for_record(record))
+        self.sign_receipt(receipt_for_record(metadata))
     }
 
     pub fn sign_receipt(&self, receipt: PayloadReceipt) -> Result<PayloadSignature, String> {
@@ -78,15 +78,15 @@ impl EthereumSigner {
 }
 
 pub fn validate_payload_signature(
-    record: &crate::model::PayloadRecord,
+    metadata: &crate::model::PayloadMetadata,
     signature: &PayloadSignature,
 ) -> Result<(), String> {
     if signature.scheme != "eip191" {
         return Err(format!("unsupported signature scheme {}", signature.scheme));
     }
 
-    let expected_receipt = receipt_for_record(record);
-    let legacy_receipt = legacy_hosting_receipt_for_record(record);
+    let expected_receipt = receipt_for_record(metadata);
+    let legacy_receipt = legacy_hosting_receipt_for_record(metadata);
     if signature.receipt != expected_receipt && signature.receipt != legacy_receipt {
         return Err("signature receipt does not match payload record".to_string());
     }
@@ -131,11 +131,11 @@ pub fn validate_payload_signature(
 }
 
 pub fn signature_is_current_payload_receipt(
-    record: &crate::model::PayloadRecord,
+    metadata: &crate::model::PayloadMetadata,
     signature: &PayloadSignature,
 ) -> bool {
-    signature.receipt == receipt_for_record(record)
-        && validate_payload_signature(record, signature).is_ok()
+    signature.receipt == receipt_for_record(metadata)
+        && validate_payload_signature(metadata, signature).is_ok()
 }
 
 fn eip191_hash(message: &[u8]) -> [u8; 32] {
@@ -223,13 +223,13 @@ fn hex_lower(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::PayloadRecord;
+    use crate::model::PayloadMetadata;
 
     const DEV_PRIVATE_KEY: &str =
         "0x4f3edf983ac636a65a842ce7c78d9aa706d3b113bce9c46f30d7d395b9c4b9b5";
 
-    fn record() -> PayloadRecord {
-        PayloadRecord {
+    fn record() -> PayloadMetadata {
+        PayloadMetadata {
             id: "69811a86589a02a9b82695c741aeae410985a5d35b8e3906a445633fa52075f9".to_string(),
             namespace: "atlas.blocks".to_string(),
             content_type: Some("text/plain".to_string()),
@@ -237,7 +237,6 @@ mod tests {
             checksum: "sha256:2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"
                 .to_string(),
             submitted_at: "2026-06-22T13:06:23Z".to_string(),
-            payload_base64: "aGVsbG8=".to_string(),
             signature: None,
         }
     }

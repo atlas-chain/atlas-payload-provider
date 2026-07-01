@@ -7,8 +7,8 @@ use base64::engine::general_purpose::STANDARD;
 use sha2::{Digest, Sha256};
 
 use crate::model::{
-    PayloadReceiptContext, PayloadRecord, PayloadSignature, PayloadSummary, canonicalize,
-    now_iso_second, receipt_for_record_with_context, summarize,
+    PayloadMetadata, PayloadReceiptContext, PayloadRecord, PayloadSignature, PayloadSummary,
+    canonicalize, metadata_for, now_iso_second, receipt_for_record_with_context, summarize,
 };
 use crate::signer::{
     EthereumSigner, signature_is_current_payload_receipt, validate_payload_signature,
@@ -25,7 +25,7 @@ pub struct StoreSnapshot {
 
 #[derive(Clone, Debug)]
 pub struct SubmitOutcome {
-    pub record: PayloadRecord,
+    pub record: PayloadMetadata,
     pub created: bool,
     pub signature: Option<PayloadSignature>,
 }
@@ -38,7 +38,7 @@ pub enum StoreFailure {
 
 #[derive(Debug)]
 struct Inner {
-    payloads: HashMap<String, PayloadRecord>,
+    payloads: HashMap<String, PayloadMetadata>,
     newest_first: VecDeque<String>,
     total_bytes: usize,
 }
@@ -84,7 +84,7 @@ impl PayloadStore {
                 .map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
             validate_stored_record(&record, max_payload_bytes)
                 .map_err(|error| format!("invalid stored payload {}: {error}", path.display()))?;
-            records.push(record);
+            records.push(metadata_for(&record));
         }
 
         records.sort_by(|left, right| right.submitted_at.cmp(&left.submitted_at));
@@ -118,7 +118,9 @@ impl PayloadStore {
     pub fn submit(&self, payload: ValidatedPayload) -> Result<SubmitOutcome, StoreFailure> {
         let receipt_context = payload.receipt_context.clone();
         let mut record = record_for(payload);
-        self.sign_record_if_enabled(&mut record)?;
+        let mut metadata = metadata_for(&record);
+        self.sign_record_if_enabled(&mut metadata)?;
+        record.signature = metadata.signature.clone();
         let mut inner = self.inner.lock().expect("payload store lock poisoned");
 
         if let Some(existing) = inner.payloads.get(&record.id).cloned() {
@@ -132,7 +134,19 @@ impl PayloadStore {
                 existing.signature = None;
                 self.sign_record_if_enabled(&mut existing)?;
                 if existing.signature.is_some() {
-                    persist_record(&self.payload_dir, &existing)?;
+                    // Same id means same namespace and bytes, so the incoming
+                    // body can be reused to rewrite the stored file.
+                    let disk_record = PayloadRecord {
+                        id: existing.id.clone(),
+                        namespace: existing.namespace.clone(),
+                        content_type: existing.content_type.clone(),
+                        size_bytes: existing.size_bytes,
+                        checksum: existing.checksum.clone(),
+                        submitted_at: existing.submitted_at.clone(),
+                        payload_base64: record.payload_base64,
+                        signature: existing.signature.clone(),
+                    };
+                    persist_record(&self.payload_dir, &disk_record)?;
                     inner.payloads.insert(existing.id.clone(), existing.clone());
                 }
             }
@@ -150,19 +164,37 @@ impl PayloadStore {
             .total_bytes
             .checked_add(record.size_bytes)
             .expect("payload byte count overflowed");
-        inner.newest_first.push_front(record.id.clone());
-        inner.payloads.insert(record.id.clone(), record.clone());
+        inner.newest_first.push_front(metadata.id.clone());
+        inner.payloads.insert(metadata.id.clone(), metadata.clone());
 
         Ok(SubmitOutcome {
-            signature: self.signature_for_context(&record, &receipt_context)?,
-            record,
+            signature: self.signature_for_context(&metadata, &receipt_context)?,
+            record: metadata,
             created: true,
         })
     }
 
-    pub fn get(&self, id: &str) -> Option<PayloadRecord> {
+    pub fn get(&self, id: &str) -> Option<PayloadMetadata> {
         let inner = self.inner.lock().expect("payload store lock poisoned");
         inner.payloads.get(id).cloned()
+    }
+
+    /// Reads the payload body from disk. Returns `Ok(None)` when the id is
+    /// unknown. Blocking: call via `spawn_blocking` from async contexts.
+    pub fn payload_bytes(&self, id: &str) -> Result<Option<Vec<u8>>, String> {
+        if self.get(id).is_none() {
+            return Ok(None);
+        }
+
+        let path = self.payload_dir.join(format!("{id}.json"));
+        let raw = std::fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        let record: PayloadRecord = serde_json::from_str(&raw)
+            .map_err(|error| format!("failed to parse {}: {error}", path.display()))?;
+        STANDARD
+            .decode(record.payload_base64.as_bytes())
+            .map(Some)
+            .map_err(|error| format!("failed to decode payload {id}: {error}"))
     }
 
     pub fn snapshot(&self, limit: usize) -> StoreSnapshot {
@@ -191,7 +223,7 @@ impl PayloadStore {
         self.signer.as_ref().map(EthereumSigner::address)
     }
 
-    fn sign_record_if_enabled(&self, record: &mut PayloadRecord) -> Result<(), StoreFailure> {
+    fn sign_record_if_enabled(&self, record: &mut PayloadMetadata) -> Result<(), StoreFailure> {
         if record
             .signature
             .as_ref()
@@ -211,7 +243,7 @@ impl PayloadStore {
 
     fn signature_for_context(
         &self,
-        record: &PayloadRecord,
+        record: &PayloadMetadata,
         context: &PayloadReceiptContext,
     ) -> Result<Option<PayloadSignature>, StoreFailure> {
         if context.is_empty() {
@@ -275,7 +307,7 @@ fn validate_stored_record(record: &PayloadRecord, max_payload_bytes: usize) -> R
     }
 
     if let Some(signature) = record.signature.as_ref() {
-        validate_payload_signature(record, signature)?;
+        validate_payload_signature(&metadata_for(record), signature)?;
     }
 
     Ok(())
@@ -389,9 +421,9 @@ mod tests {
         drop(store);
 
         let loaded = PayloadStore::load(dir.clone(), 1024, None).unwrap();
-        let record = loaded.get(&outcome.record.id).unwrap();
+        let bytes = loaded.payload_bytes(&outcome.record.id).unwrap().unwrap();
 
-        assert_eq!(record.payload_base64, "aGVsbG8=");
+        assert_eq!(bytes, b"hello");
         assert_eq!(loaded.snapshot(10).payload_count, 1);
 
         let _ = std::fs::remove_dir_all(dir);
